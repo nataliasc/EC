@@ -5,7 +5,9 @@ from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
 import torch
 
-from envs import AtariEnv
+import gymnasium as gym
+from wrappers import ImgObsWrapper
+from minigrid.wrappers import RGBImgObsWrapper
 
 
 # Globals
@@ -34,13 +36,14 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
     'data': data,
     'layout': dict(title=title, xaxis={'title': xaxis}, yaxis={'title': title})
   }, filename=os.path.join(path, title + '.html'), auto_open=False)
-
-
+    
 # Test DQN
 def test(args, T, agent, val_mem, results_dir, evaluate=False):
   global Ts, rewards, Qs, best_avg_reward
-  env = AtariEnv(args)
-  env.eval()
+  # Environment
+  env = gym.make('MiniGrid-MemoryS13Random-v0')
+  env = RGBImgObsWrapper(env) # Get pixel observations
+  env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
   Ts.append(T)
   T_rewards, T_Qs = [], []
 
@@ -49,13 +52,16 @@ def test(args, T, agent, val_mem, results_dir, evaluate=False):
   for _ in range(args.evaluation_episodes):
     while True:
       if done:
-        state, reward_sum, done = env.reset(), 0, False
+        state, info = env.reset()
+        reward_sum = 0
+        done = False
 
       action = agent.act(state)  # Choose an action ε-greedily (default for eval mode)
-      state, reward, done = env.step(action)  # Step
+      state, reward, terminated, truncated, _ = env.step(action)  # Step
+      done = terminated | truncated
       reward_sum += reward
-      if args.render:
-        env.render()
+      # if args.render:
+      #   env.render()
 
       if done:
         T_rewards.append(reward_sum)

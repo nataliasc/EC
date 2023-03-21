@@ -38,7 +38,22 @@ def _knn_search(queries, data, k, return_neighbours=False, res=None):
     faiss.knn_L2sqr(faiss.swig_ptr(queries), faiss.swig_ptr(data), dim, num_queries, data.shape[0], heaps)
   else:
     dists, idxs = torch.empty(num_queries, k, dtype=torch.float32, device=queries.device), torch.empty(num_queries, k, dtype=torch.int64, device=queries.device)
-    faiss.bruteForceKnn(res, faiss.METRIC_L2, faiss.cast_integer_to_float_ptr(data.storage().data_ptr() + data.storage_offset() * 4), data.is_contiguous(), data.shape[0], faiss.cast_integer_to_float_ptr(queries.storage().data_ptr() + queries.storage_offset() * 4), queries.is_contiguous(), num_queries, dim, k, faiss.cast_integer_to_float_ptr(dists.storage().data_ptr() + dists.storage_offset() * 4), faiss.cast_integer_to_long_ptr(idxs.storage().data_ptr() + idxs.storage_offset() * 8))
+    # faiss.bruteForceKnn(res, faiss.METRIC_L2, faiss.cast_integer_to_float_ptr(data.storage().data_ptr() + data.storage_offset() * 4), data.is_contiguous(), data.shape[0], faiss.cast_integer_to_float_ptr(queries.storage().data_ptr() + queries.storage_offset() * 4), queries.is_contiguous(), num_queries, dim, k, faiss.cast_integer_to_float_ptr(dists.storage().data_ptr() + dists.storage_offset() * 4), faiss.cast_integer_to_long_ptr(idxs.storage().data_ptr() + idxs.storage_offset() * 8))
+
+    args = faiss.GpuDistanceParams()
+    args.metric = faiss.METRIC_L2
+    args.k = k
+    args.dims = dim
+    args.vectors = faiss.cast_integer_to_float_ptr(data.storage().data_ptr() + data.storage_offset() * 4)
+    args.vectorsRowMajor = data.is_contiguous()
+    args.numVectors = data.shape[0]
+    args.queries = faiss.cast_integer_to_float_ptr(queries.storage().data_ptr() + queries.storage_offset() * 4)
+    args.queriesRowMajor = queries.is_contiguous()
+    args.numQueries = num_queries
+    args.outDistances = faiss.cast_integer_to_float_ptr(dists.storage().data_ptr() + dists.storage_offset() * 4)
+    args.outIndices =  faiss.cast_integer_to_idx_t_ptr(idxs.storage().data_ptr() + idxs.storage_offset() * 8)
+    faiss.bfKnn(res, args)
+  
   if return_neighbours:
     neighbours = data[idxs.reshape(-1)].reshape(-1, k, dim)
     return dists, idxs, neighbours
@@ -210,28 +225,28 @@ class DND(StaticDictionary):
     if keys.grad is not None:
       grad = keys.grad.data
       square_avg = self.rmsprop_keys_square_avg[idxs]
-      square_avg.mul_(self.rmsprop_decay).addcmul_(1 - self.rmsprop_decay, grad, grad)
+      square_avg.mul_(self.rmsprop_decay).addcmul_(grad, grad, value=1 - self.rmsprop_decay)
       avg = square_avg.add(self.rmsprop_epsilon).sqrt_()
-      keys.data.addcdiv_(-self.rmsprop_learning_rate, grad, avg)
+      keys.data.addcdiv_(grad, avg, value=-self.rmsprop_learning_rate)
       self.keys[idxs] = keys.detach().cpu().numpy()
       self.rmsprop_keys_square_avg[idxs] = square_avg
     if values.grad is not None:
       grad = values.grad.data
       square_avg = self.rmsprop_values_square_avg[idxs]
-      square_avg.mul_(self.rmsprop_decay).addcmul_(1 - self.rmsprop_decay, grad, grad)
+      square_avg.mul_(self.rmsprop_decay).addcmul_(grad, grad, value=1 - self.rmsprop_decay)
       avg = square_avg.add(self.rmsprop_epsilon).sqrt_()
-      values.data.addcdiv_(-self.rmsprop_learning_rate, grad, avg)
+      values.data.addcdiv_(grad, avg, value=-self.rmsprop_learning_rate)
       self.values[idxs] = values.detach().cpu().numpy()
       self.rmsprop_values_square_avg[idxs] = square_avg
 
-
+    
 class NEC(nn.Module):
   def __init__(self, args, observation_shape, action_space, hash_size):
     super().__init__()
-    self.conv1 = nn.Conv2d(args.history_length, 32, 8, stride=4, padding=1)
-    self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
-    self.conv3 = nn.Conv2d(64, 64, 3)
-    self.fc_keys = nn.Linear(3136, args.key_size)
+    self.conv1 = nn.Conv2d(3, 16, kernel_size=8, stride=8, padding='valid')
+    self.conv2 = nn.Conv2d(16, 32, kernel_size=2, stride=1, padding='valid')
+    self.conv3 = nn.Conv2d(32, 32, kernel_size=2, stride=1, padding='valid')
+    self.fc_keys = nn.Linear(32 * 11 * 11, args.key_size)
     faiss_gpu_resources = _setup_faiss_gpu_resources(args.device)
     self.memories = [DND(args, hash_size, faiss_gpu_resources) for _ in range(action_space)]
 
@@ -239,7 +254,7 @@ class NEC(nn.Module):
     hidden = F.relu(self.conv1(observation))
     hidden = F.relu(self.conv2(hidden))
     hidden = F.relu(self.conv3(hidden))
-    keys = self.fc_keys(hidden.view(-1, 3136))
+    keys = self.fc_keys(hidden.view(-1, 32 * 11 * 11))
     memory_output = [memory(keys, learning) for memory in self.memories]
     if learning:
       memory_output, neighbours, values, idxs = zip(*memory_output)

@@ -29,13 +29,13 @@ class RMSprop(_RMSprop):
         alpha = group['alpha']
         state['step'] += 1
         
-        square_avg.mul_(alpha).addcmul_(1 - alpha, grad, grad)
+        square_avg.mul_(alpha).addcmul_(grad, grad, value = 1 - alpha) # https://github.com/pytorch/pytorch/issues/32861
         avg = square_avg.add(group['eps']).sqrt_()
         if group['momentum'] > 0:
           buf = state['momentum_buffer']
           buf.mul_(group['momentum']).addcdiv_(grad, avg)
           p.data.add_(-group['lr'], buf)
         else:
-          p.data.addcdiv_(-group['lr'], grad, avg)
+          p.data.addcdiv_(grad, avg, value = -group['lr']) # https://github.com/pytorch/pytorch/issues/32861
 
     return loss

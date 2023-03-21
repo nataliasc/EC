@@ -2,41 +2,41 @@ import argparse
 from datetime import datetime
 import json
 import os
-import atari_py
+import gymnasium as gym
 import numpy as np
 from tqdm import tqdm
 import torch
 from torch import optim
 
 from agents import MFECAgent, NECAgent
-from envs import AtariEnv
+from wrappers import ImgObsWrapper
+from minigrid.wrappers import RGBImgObsWrapper
 from memory import ExperienceReplay
 from test import test
 
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='Episodic Control')
-parser.add_argument('--id', type=str, default='default', help='Experiment ID')
+parser.add_argument('--id', type=str, default='minigrid', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=123, help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
-parser.add_argument('--game', type=str, default='pong', choices=atari_py.list_games(), help='ATARI game')
-parser.add_argument('--T-max', type=int, default=int(10e6), metavar='STEPS', help='Number of training steps (4x number of frames)')
+parser.add_argument('--T-max', type=int, default=int(10e4), metavar='STEPS', help='Number of training steps (4x number of frames)')
 parser.add_argument('--max-episode-length', type=int, default=int(108e3), metavar='LENGTH', help='Max episode length (0 to disable)')
 parser.add_argument('--history-length', type=int, default=4, metavar='T', help='Number of consecutive states processed (ATARI)')  # 1 for MFEC (originally), 4 for MFEC (in NEC paper) and NEC
-parser.add_argument('--algorithm', type=str, default='MFEC', choices=['MFEC', 'NEC'], help='Algorithm')
+parser.add_argument('--algorithm', type=str, default='NEC', choices=['MFEC', 'NEC'], help='Algorithm')
 parser.add_argument('--hidden-size', type=int, default=512, metavar='SIZE', help='Hidden size')
-parser.add_argument('--key-size', type=int, default=64, metavar='SIZE', help='Key size')  # 64 for MFEC, 128 for NEC
-parser.add_argument('--num-neighbours', type=int, default=11, metavar='p', help='Number of nearest neighbours')  # 11 for MFEC, 50 for NEC
+parser.add_argument('--key-size', type=int, default=128, metavar='SIZE', help='Key size')  # 64 for MFEC, 128 for NEC
+parser.add_argument('--num-neighbours', type=int, default=50, metavar='p', help='Number of nearest neighbours')  # 11 for MFEC, 50 for NEC
 parser.add_argument('--model', type=str, metavar='PARAMS', help='Pretrained model (state dict)')
-parser.add_argument('--memory-capacity', type=int, default=int(1e5), metavar='CAPACITY', help='Experience replay memory capacity')
-parser.add_argument('--dictionary-capacity', type=int, default=int(1e6), metavar='CAPACITY', help='Dictionary capacity (per action)')  # 1e6 for MFEC, 5e5 for NEC
+parser.add_argument('--memory-capacity', type=int, default=int(1e4), metavar='CAPACITY', help='Experience replay memory capacity')
+parser.add_argument('--dictionary-capacity', type=int, default=int(5e3), metavar='CAPACITY', help='Dictionary capacity (per action)')  # 1e6 for MFEC, 5e5 for NEC
 parser.add_argument('--replay-frequency', type=int, default=4, metavar='k', help='Frequency of sampling from memory')
-parser.add_argument('--episodic-multi-step', type=int, default=1e6, metavar='n', help='Number of steps for multi-step return from end of episode')  # Infinity for MFEC, 100 for NEC
+parser.add_argument('--episodic-multi-step', type=int, default=100, metavar='n', help='Number of steps for multi-step return from end of episode')  # Infinity for MFEC, 100 for NEC
 parser.add_argument('--epsilon-initial', type=float, default=1, metavar='ε', help='Initial value of ε-greedy policy')
-parser.add_argument('--epsilon-final', type=float, default=0.005, metavar='ε', help='Final value of ε-greedy policy')  # 0.005 for MFEC, 0.001 for NEC
+parser.add_argument('--epsilon-final', type=float, default=0.001, metavar='ε', help='Final value of ε-greedy policy')  # 0.005 for MFEC, 0.001 for NEC
 parser.add_argument('--epsilon-anneal-start', type=int, default=5000, metavar='ε', help='Number of steps before annealing ε')
 parser.add_argument('--epsilon-anneal-end', type=int, default=25000, metavar='ε', help='Number of steps to finish annealing ε')
-parser.add_argument('--discount', type=float, default=1, metavar='γ', help='Discount factor')  # 1 for MFEC, 0.99 for NEC
+parser.add_argument('--discount', type=float, default=0.99, metavar='γ', help='Discount factor')  # 1 for MFEC, 0.99 for NEC
 parser.add_argument('--learning-rate', type=float, default=7.92468721e-6, metavar='η', help='Network learning rate')
 parser.add_argument('--rmsprop-decay', type=float, default=0.95, metavar='α', help='RMSprop decay')
 parser.add_argument('--rmsprop-epsilon', type=float, default=0.01, metavar='ε', help='RMSprop epsilon')
@@ -45,11 +45,11 @@ parser.add_argument('--dictionary-learning-rate', type=float, default=0.1, metav
 parser.add_argument('--kernel', type=str, default='mean_IDW', choices=['mean', 'mean_IDW'], metavar='k', help='Kernel function')  # mean for MFEC, mean_IDW for NEC
 parser.add_argument('--kernel-delta', type=float, default=1e-3, metavar='δ', help='Mean IDW kernel delta')
 parser.add_argument('--batch-size', type=int, default=32, metavar='SIZE', help='Batch size')
-parser.add_argument('--learn-start', type=int, default=0, metavar='STEPS', help='Number of steps before starting training')  # 0 for MFEC, 50000 for NEC
+parser.add_argument('--learn-start', type=int, default=10_000, metavar='STEPS', help='Number of steps before starting training')  # 0 for MFEC, 50000 for NEC
 parser.add_argument('--evaluate', action='store_true', help='Evaluate only')
-parser.add_argument('--evaluation-interval', type=int, default=100000, metavar='STEPS', help='Number of training steps between evaluations')
+parser.add_argument('--evaluation-interval', type=int, default=100, metavar='STEPS', help='Number of training steps between evaluations')
 parser.add_argument('--evaluation-episodes', type=int, default=10, metavar='N', help='Number of evaluation episodes to average over')
-parser.add_argument('--evaluation-size', type=int, default=500, metavar='N', help='Number of transitions to use for validating Q')
+parser.add_argument('--evaluation-size', type=int, default=300, metavar='N', help='Number of transitions to use for validating Q')
 parser.add_argument('--evaluation-epsilon', type=float, default=0, metavar='ε', help='Value of ε-greedy policy for evaluation')
 parser.add_argument('--checkpoint-interval', type=int, default=0, metavar='STEPS', help='Number of training steps between saving buffers (0 to disable)')  # TODO
 parser.add_argument('--render', action='store_true', help='Display screen (testing only)')
@@ -71,24 +71,28 @@ with open(os.path.join(results_dir, 'args.json'), 'w') as f:
   json.dump(args.__dict__, f, indent=2)
 np.random.seed(args.seed)
 torch.manual_seed(np.random.randint(1, 10000))
+
 if torch.cuda.is_available() and not args.disable_cuda:
   args.device = torch.device('cuda')
   torch.cuda.manual_seed(np.random.randint(1, 10000))
 else:
   args.device = torch.device('cpu')
+
 metrics = {'train_steps': [], 'train_episodes': [], 'train_rewards': [], 'test_steps': [], 'test_rewards': [], 'test_Qs': []}
 
-
+    
 # Environment
-env = AtariEnv(args)
-env.train()
-
+env = gym.make('MiniGrid-MemoryS13Random-v0')
+env = RGBImgObsWrapper(env) # Get pixel observations
+env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
+hash_size = len(np.concatenate([env.grid.encode(),
+                env.agent_pos, env.agent_dir], axis=None).ravel()) + 1
 
 # Agent and memory
 if args.algorithm == 'MFEC':
   agent = MFECAgent(args, env.observation_space.shape, env.action_space.n, env.hash_space.shape[0])
 elif args.algorithm == 'NEC':
-  agent = NECAgent(args, env.observation_space.shape, env.action_space.n, env.hash_space.shape[0])
+  agent = NECAgent(args, env.observation_space.shape, env.action_space.n, hash_size)
   mem = ExperienceReplay(args.memory_capacity, env.observation_space.shape, args.device)
 
 
@@ -97,9 +101,11 @@ val_mem = ExperienceReplay(args.evaluation_size, env.observation_space.shape, ar
 T, done, states = 0, True, []  # Store transition data in episodic buffers
 while T < args.evaluation_size:
   if done:
-    state, done = env.reset(), False
-  states.append(state.cpu().numpy())  # Append transition data to episodic buffers
-  state, _, done = env.step(env.action_space.sample())
+    state, info = env.reset()
+    done = False
+  states.append(state.detach().cpu())  # Append transition data to episodic buffers
+  state, reward, terminated, truncated, info = env.step(env.action_space.sample())
+  done = terminated | truncated
   T += 1
 val_mem.append_batch(np.stack(states), np.zeros((args.evaluation_size, ), dtype=np.int64), np.zeros((args.evaluation_size, ), dtype=np.float32))
 
@@ -115,7 +121,8 @@ else:
   agent.set_epsilon(epsilon)
   for T in tqdm(range(1, args.T_max + 1)):
     if done:
-      state, done = env.reset(), False
+      state, info = env.reset()
+      done = False
       states, actions, rewards, keys, values, hashes = [], [], [], [], [], []  # Store transition data in episodic buffers
 
     # Linearly anneal ε over set interval
@@ -124,12 +131,18 @@ else:
       agent.set_epsilon(epsilon)
     
     # Append transition data to episodic buffers (1/2)
-    states.append(state.cpu().numpy())
-    hashes.append(env.get_state_hash())  # Use environment state hash function
+    states.append(state.detach().cpu())
+    state_hash = np.concatenate([env.grid.encode(),
+                env.agent_pos, env.agent_dir], axis=None).ravel()
+    state_hash = state_hash / 0xFF
+    state_hash = state_hash.astype(np.float32)
+    hashes.append(state_hash)
     
     # Choose an action according to the policy
     action, key, value = agent.act(state, return_key_value=True)
-    state, reward, done = env.step(action)  # Step
+    state, reward, terminated, truncated, info = env.step(action)  # Step
+    done = terminated | truncated
+
 
     # Append transition data to episodic buffers (2/2); note that original NEC implementation does not recalculate keys/values at the end of the episode
     actions.append(action)
