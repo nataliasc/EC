@@ -7,7 +7,7 @@ import torch
 
 import gymnasium as gym
 from wrappers import ImgObsWrapper
-from minigrid.wrappers import RGBImgObsWrapper
+from minigrid.wrappers import RGBImgPartialObsWrapper
 
 
 # Globals
@@ -41,8 +41,8 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
 def test(args, T, agent, val_mem, results_dir, evaluate=False):
   global Ts, rewards, Qs, best_avg_reward
   # Environment
-  env = gym.make('MiniGrid-MemoryS13Random-v0')
-  env = RGBImgObsWrapper(env) # Get pixel observations
+  env = gym.make('MiniGrid-SimpleCrossingS9N1-v0')
+  env = RGBImgPartialObsWrapper(env) # Get pixel observations
   env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
   Ts.append(T)
   T_rewards, T_Qs = [], []
