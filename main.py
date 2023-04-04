@@ -10,7 +10,7 @@ from torch import optim
 
 from agents import MFECAgent, NECAgent
 from wrappers import ImgObsWrapper
-from minigrid.wrappers import RGBImgPartialObsWrapper #, ActionBonus
+from minigrid.wrappers import RGBImgObsWrapper, PositionBonus
 from memory import ExperienceReplay
 from test import test
 from torch.utils.tensorboard import SummaryWriter
@@ -18,16 +18,16 @@ from torch.utils.tensorboard import SummaryWriter
 
 # Hyperparameters
 parser = argparse.ArgumentParser(description='Episodic Control')
-parser.add_argument('--id', type=str, default='minigrid-simple-crossing', help='Experiment ID')
+parser.add_argument('--id', type=str, default='minigrid-doorkey', help='Experiment ID')
 parser.add_argument('--seed', type=int, default=123, help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
 parser.add_argument('--T-max', type=int, default=int(10e6), metavar='STEPS', help='Number of training steps (4x number of frames)')
-parser.add_argument('--max-episode-length', type=int, default=int(0), metavar='LENGTH', help='Max episode length (0 to disable)')
+parser.add_argument('--max-episode-length', type=int, default=int(605), metavar='LENGTH', help='Max episode length (0 to disable)')
 parser.add_argument('--history-length', type=int, default=4, metavar='T', help='Number of consecutive states processed (ATARI)')  # 1 for MFEC (originally), 4 for MFEC (in NEC paper) and NEC
 parser.add_argument('--algorithm', type=str, default='NEC', choices=['MFEC', 'NEC'], help='Algorithm')
 parser.add_argument('--hidden-size', type=int, default=512, metavar='SIZE', help='Hidden size')
-parser.add_argument('--key-size', type=int, default=64, metavar='SIZE', help='Key size')  # 64 for MFEC, 128 for NEC
-parser.add_argument('--num-neighbours', type=int, default=11, metavar='p', help='Number of nearest neighbours')  # 11 for MFEC, 50 for NEC
+parser.add_argument('--key-size', type=int, default=128, metavar='SIZE', help='Key size')  # 64 for MFEC, 128 for NEC
+parser.add_argument('--num-neighbours', type=int, default=50, metavar='p', help='Number of nearest neighbours')  # 11 for MFEC, 50 for NEC
 parser.add_argument('--model', type=str, metavar='PARAMS', help='Pretrained model (state dict)')
 parser.add_argument('--memory-capacity', type=int, default=int(1e5), metavar='CAPACITY', help='Experience replay memory capacity')
 parser.add_argument('--dictionary-capacity', type=int, default=int(1e6), metavar='CAPACITY', help='Dictionary capacity (per action)')  # 1e6 for MFEC, 5e5 for NEC
@@ -36,7 +36,7 @@ parser.add_argument('--episodic-multi-step', type=int, default=1e6, metavar='n',
 parser.add_argument('--epsilon-initial', type=float, default=1, metavar='ε', help='Initial value of ε-greedy policy')
 parser.add_argument('--epsilon-final', type=float, default=0.01, metavar='ε', help='Final value of ε-greedy policy')  # 0.005 for MFEC, 0.001 for NEC
 parser.add_argument('--epsilon-anneal-start', type=int, default=5000, metavar='ε', help='Number of steps before annealing ε')
-parser.add_argument('--epsilon-anneal-end', type=int, default=250_000, metavar='ε', help='Number of steps to finish annealing ε')
+parser.add_argument('--epsilon-anneal-end', type=int, default=500_000, metavar='ε', help='Number of steps to finish annealing ε')
 parser.add_argument('--discount', type=float, default=0.99, metavar='γ', help='Discount factor')  # 1 for MFEC, 0.99 for NEC
 parser.add_argument('--learning-rate', type=float, default=2.5e-4, metavar='η', help='Network learning rate')
 parser.add_argument('--rmsprop-decay', type=float, default=0.95, metavar='α', help='RMSprop decay')
@@ -48,10 +48,10 @@ parser.add_argument('--kernel-delta', type=float, default=1e-3, metavar='δ', he
 parser.add_argument('--batch-size', type=int, default=32, metavar='SIZE', help='Batch size')
 parser.add_argument('--learn-start', type=int, default=0, metavar='STEPS', help='Number of steps before starting training')  # 0 for MFEC, 50000 for NEC
 parser.add_argument('--evaluate', action='store_true', help='Evaluate only')
-parser.add_argument('--evaluation-interval', type=int, default=10_000, metavar='STEPS', help='Number of training steps between evaluations')
+parser.add_argument('--evaluation-interval', type=int, default=5000, metavar='STEPS', help='Number of training steps between evaluations')
 parser.add_argument('--evaluation-episodes', type=int, default=10, metavar='N', help='Number of evaluation episodes to average over')
-parser.add_argument('--evaluation-size', type=int, default=500, metavar='N', help='Number of transitions to use for validating Q')
-parser.add_argument('--evaluation-epsilon', type=float, default=0, metavar='ε', help='Value of ε-greedy policy for evaluation')
+parser.add_argument('--evaluation-size', type=int, default=100, metavar='N', help='Number of transitions to use for validating Q')
+parser.add_argument('--evaluation-epsilon', type=float, default=0.01, metavar='ε', help='Value of ε-greedy policy for evaluation')
 parser.add_argument('--checkpoint-interval', type=int, default=0, metavar='STEPS', help='Number of training steps between saving buffers (0 to disable)')  # TODO
 parser.add_argument('--render', action='store_true', help='Display screen (testing only)')
 args = parser.parse_args()
@@ -82,16 +82,16 @@ metrics = {'train_steps': [], 'train_episodes': [], 'train_rewards': [], 'test_s
 
     
 # Environment
-env = gym.make('MiniGrid-SimpleCrossingS9N1-v0')
-env = RGBImgPartialObsWrapper(env) # Get pixel observations
+env = gym.make('MiniGrid-DoorKey-5x5-v0')
+env = RGBImgObsWrapper(env) # Get pixel observations
 env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
-# env = ActionBonus(env)
+# env = PositionBonus(env)
 hash_size = len(np.concatenate([env.grid.encode(),
                 env.agent_pos, env.agent_dir], axis=None).ravel()) + 1
 
 # Agent and memory
 if args.algorithm == 'MFEC':
-  agent = MFECAgent(args, env.observation_space.shape, env.action_space.n, env.hash_space.shape[0])
+  agent = MFECAgent(args, env.observation_space.shape, env.action_space.n, hash_size)
 elif args.algorithm == 'NEC':
   agent = NECAgent(args, env.observation_space.shape, env.action_space.n, hash_size)
   mem = ExperienceReplay(args.memory_capacity, env.observation_space.shape, args.device)

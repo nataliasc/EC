@@ -141,7 +141,7 @@ class MFEC(nn.Module):
     self.memories = [StaticDictionary(args, hash_size, faiss_gpu_resources) for _ in range(action_space)]
 
   def forward(self, observation):
-    keys = observation.view(observation.size(0), -1)
+    keys = observation.reshape((observation.size(0), -1)) # https://stackoverflow.com/a/66750438
     keys = torch.matmul(keys, self.projection) if hasattr(self, 'projection') else keys
     q_values = torch.cat([memory(keys) for memory in self.memories], dim=1)
     return q_values, keys

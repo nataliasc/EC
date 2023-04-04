@@ -4,10 +4,13 @@ import plotly
 from plotly.graph_objs import Scatter
 from plotly.graph_objs.scatter import Line
 import torch
+import ipdb
+import plotly.express as px
+import time
 
 import gymnasium as gym
 from wrappers import ImgObsWrapper
-from minigrid.wrappers import RGBImgPartialObsWrapper
+from minigrid.wrappers import RGBImgObsWrapper
 
 
 # Globals
@@ -41,8 +44,8 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
 def test(args, T, agent, val_mem, results_dir, evaluate=False):
   global Ts, rewards, Qs, best_avg_reward
   # Environment
-  env = gym.make('MiniGrid-SimpleCrossingS9N1-v0')
-  env = RGBImgPartialObsWrapper(env) # Get pixel observations
+  env = gym.make('MiniGrid-DoorKey-5x5-v0')
+  env = RGBImgObsWrapper(env) # Get pixel observations
   env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
   Ts.append(T)
   T_rewards, T_Qs = [], []
@@ -57,11 +60,11 @@ def test(args, T, agent, val_mem, results_dir, evaluate=False):
         done = False
 
       action = agent.act(state)  # Choose an action ε-greedily (default for eval mode)
+
       state, reward, terminated, truncated, _ = env.step(action)  # Step
+        
       done = terminated | truncated
       reward_sum += reward
-      # if args.render:
-      #   env.render()
 
       if done:
         T_rewards.append(reward_sum)
