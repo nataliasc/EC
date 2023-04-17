@@ -1,5 +1,10 @@
+*.db
+*.pth
+*.gif
 .DS_Store
 *.ipynb
+wandb/
+runs/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
