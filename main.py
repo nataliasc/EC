@@ -23,9 +23,8 @@ parser.add_argument('--seed', type=int, default=123, help='Random seed')
 parser.add_argument('--disable-cuda', action='store_true', help='Disable CUDA')
 parser.add_argument('--T-max', type=int, default=int(10e6), metavar='STEPS', help='Number of training steps (4x number of frames)')
 parser.add_argument('--max-episode-length', type=int, default=int(605), metavar='LENGTH', help='Max episode length (0 to disable)')
-parser.add_argument('--history-length', type=int, default=4, metavar='T', help='Number of consecutive states processed (ATARI)')  # 1 for MFEC (originally), 4 for MFEC (in NEC paper) and NEC
 parser.add_argument('--algorithm', type=str, default='NEC', choices=['MFEC', 'NEC'], help='Algorithm')
-parser.add_argument('--hidden-size', type=int, default=512, metavar='SIZE', help='Hidden size')
+# parser.add_argument('--hidden-size', type=int, default=512, metavar='SIZE', help='Hidden size')
 parser.add_argument('--key-size', type=int, default=128, metavar='SIZE', help='Key size')  # 64 for MFEC, 128 for NEC
 parser.add_argument('--num-neighbours', type=int, default=50, metavar='p', help='Number of nearest neighbours')  # 11 for MFEC, 50 for NEC
 parser.add_argument('--model', type=str, metavar='PARAMS', help='Pretrained model (state dict)')
