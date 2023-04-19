@@ -12,7 +12,7 @@ from optimisers import RMSprop
 class _Agent(ABC):
   def __init__(self, args):
     self.train_epsilon = 0
-    self.eval_epsilon = args.evaluation_epsilon
+    self.eval_epsilon = 0.01
     self.training = True
 
   # Acts based on single set of Q-values (no batch); also returns value
@@ -73,8 +73,8 @@ class MFECAgent(_EpisodicAgent):
     self.action_space = action_space
 
     self.online_net = MFEC(args, observation_shape, action_space, hash_size).to(device=args.device)
-    if args.model and os.path.isfile(args.model):
-      self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
+    # if args.model and os.path.isfile(args.model):
+    #   self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
     self.online_net.train()
 
 

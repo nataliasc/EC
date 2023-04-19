@@ -41,14 +41,14 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
   }, filename=os.path.join(path, title + '.html'), auto_open=False)
     
 # Test DQN
-def test(args, T, agent, val_mem, results_dir, evaluate=False):
+def test(args, T, agent, results_dir, evaluate=False):
   global Ts, rewards, Qs, best_avg_reward
   # Environment
-  env = gym.make('MiniGrid-DoorKey-5x5-v0')
+  env = gym.make('MiniGrid-DoorKey-6x6-v0')
   env = RGBImgObsWrapper(env) # Get pixel observations
   env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
   Ts.append(T)
-  T_rewards, T_Qs = [], []
+  T_rewards = []
 
   # Test performance over several episodes
   done = True
@@ -71,19 +71,18 @@ def test(args, T, agent, val_mem, results_dir, evaluate=False):
         break
   env.close()
 
-  # Test Q-values over validation memory
-  for state in val_mem:  # Iterate over valid states
-    T_Qs.append(agent.evaluate_q(state))
+  # # Test Q-values over validation memory
+  # for state in val_mem:  # Iterate over valid states
+  #   T_Qs.append(agent.evaluate_q(state))
 
-  avg_reward, avg_Q = sum(T_rewards) / len(T_rewards), sum(T_Qs) / len(T_Qs)
+  avg_reward = sum(T_rewards) / len(T_rewards)
   if not evaluate:
     # Append to results
     rewards.append(T_rewards)
-    Qs.append(T_Qs)
 
     # Plot
     lineplot(Ts, rewards, 'Reward', path=results_dir, xaxis='Step')
-    lineplot(Ts, Qs, 'Q', path=results_dir, xaxis='Step')
+    # lineplot(Ts, Qs, 'Q', path=results_dir, xaxis='Step')
 
     # Save model parameters if improved
     if avg_reward > best_avg_reward:
@@ -91,4 +90,4 @@ def test(args, T, agent, val_mem, results_dir, evaluate=False):
       agent.save(results_dir)
 
   # Return rewards and Q-values
-  return T_rewards, T_Qs
+  return T_rewards
