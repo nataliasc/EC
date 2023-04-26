@@ -4,6 +4,7 @@ training on a Minigrid environment.
 from typing import Any
 from typing import Dict
 import os
+import json
 
 import gym
 import optuna
@@ -14,6 +15,7 @@ from stable_baselines3.common.monitor import Monitor # record episode statistics
 import torch
 import torch.nn as nn
 import numpy as np
+import time
 
 import gymnasium as gym
 from minigrid.wrappers import RGBImgObsWrapper
@@ -28,7 +30,7 @@ from argparse import Namespace
 N_TRIALS = 100
 N_STARTUP_TRIALS = 5
 N_EVALUATIONS = 2
-N_TIMESTEPS = int(3e6)
+N_TIMESTEPS = int(1e6)
 EVAL_FREQ = int(N_TIMESTEPS / N_EVALUATIONS)
 N_EVAL_EPISODES = 3
 
@@ -56,19 +58,14 @@ def sample_nec_params(trial: optuna.Trial):
     dictionary_learning_rate = trial.suggest_float("dict_lr", 1e-5, 0.1, log=True)
     # activation_fn = trial.suggest_categorical("activation_fn", ["tanh", "relu"])
 
-    # Display true values.
     # trial.set_user_attr("n_steps", n_steps)
     trial.set_user_attr("key_size", 64)
-
-    # net_arch = [
-    #     {"pi": [64], "vf": [64]} if net_arch == "tiny" else {"pi": [64, 64], "vf": [64, 64]}
-    # ]
 
     # activation_fn = {"tanh": nn.Tanh, "relu": nn.ReLU}[activation_fn]
 
     args = Namespace(id='minigrid-hp',
                  seed=123,
-                 T_max=int(10e4),
+                 T_max=int(10e6),
                  max_episode_length=605,
                  key_size=key_size,
                  num_neighbours=num_neighbours,
@@ -91,43 +88,13 @@ def sample_nec_params(trial: optuna.Trial):
                  kernel_delta=1e-3,
                  batch_size=32,
                  learn_start=10_000,
-                 evaluation_interval=1000,
+                 evaluation_interval=50_000,
                  evaluation_episodes=10,
                  evaluation_size=300,
                  evaluation_epsilon=0.,
                  checkpoint_interval=0,
                  render=False)
     return args
-
-    # return {
-    #     "n_steps": n_steps,
-    #     "key_size": key_size,
-    #     "num_neighbours": num_neighbours,
-    #     "memory_capacity": memory_capacity,
-    #     "dictionary_capacity": dictionary_capacity,
-    #     "replay_frequency": replay_frequency,
-    #     "epsilon_initial": epsilon_initial,
-    #     "epsilon_final": epsilon_final,
-    #     "epsilon_anneal_start": epsilon_anneal_start,
-    #     "epsilon_anneal_end": epsilon_anneal_end,
-    #     "discount": discount,
-    #     "learning_rate": learning_rate,
-    #     "evaluation_interval": 1000,
-    #     "episodic_multistep": 1e6,
-    #     "max_episode_length": 605,
-    #     "rmsprop_decay": 0.95,
-    #     "rmsprop_epsilon": 0.01,
-    #     "rmsprop_momentum": 0,
-    #     "dictionary_learning_rate": 0.01,
-    #     "kernel": "mean",
-    #     "kernel_delta": 1e-3,
-    #     "batch_size": 32,
-    #     "evaluation_episodes": 10,
-    #     "evaluation_size": 100,
-    #     "evaluation_epsilon": 0.01,
-    #     "checkpoint_interval": 0
-    # }
-
 
 # class TrialEvalCallback(EvalCallback):
 #     """Callback used for evaluating and reporting a trial."""
@@ -165,11 +132,13 @@ def sample_nec_params(trial: optuna.Trial):
 
 
 def objective(trial: optuna.Trial) -> float:
-    # kwargs = DEFAULT_HYPERPARAMS.copy()
     # Sample hyperparameters.
     kwargs = sample_nec_params(trial)
-    results_dir = os.path.join('results', kwargs.id)
+    timestr = time.strftime("%Y-%m-%d_%H-%M-%S")
+    results_dir = os.path.join(f'results_{timestr}', kwargs.id)
     os.makedirs(results_dir, exist_ok=True)
+    with open(os.path.join(results_dir, 'args.json'), 'w') as f:
+        json.dump(kwargs.__dict__, f, indent=2)
     kwargs.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # Create env used for training the agent
     env = ImgObsWrapper(RGBImgObsWrapper(gym.make(ENV_ID)), kwargs.device)
@@ -177,7 +146,7 @@ def objective(trial: optuna.Trial) -> float:
                 env.agent_pos, env.agent_dir], axis=None).ravel()) + 1
     # Create the RL model.
     agent = MFECAgent(kwargs, env.observation_space.shape, env.action_space.n, hash_size)
-    # mem = ExperienceReplay(kwargs.memory_capacity, env.observation_space.shape, device)
+
     # Create env used for evaluation.
     # eval_env = Monitor(ImgObsWrapper(RGBImgObsWrapper(gym.make(ENV_ID))))
     # Create the callback that will periodically evaluate and report the performance.
@@ -185,84 +154,71 @@ def objective(trial: optuna.Trial) -> float:
     #     eval_env, trial, n_eval_episodes=N_EVAL_EPISODES, eval_freq=EVAL_FREQ, deterministic=True
     # )
 
-    nan_encountered = False
-    try:
-        agent.train()
-        # agent.learn(N_TIMESTEPS, callback=eval_callback)
-        done, epsilon = True, kwargs.epsilon_initial
-        agent.set_epsilon(epsilon)
-        for T in range(1, int(3e6) + 1):
-           if done:
+    agent.train()
+    # agent.learn(N_TIMESTEPS, callback=eval_callback)
+    done, epsilon, test_rewards = True, kwargs.epsilon_initial, 0
+    agent.set_epsilon(epsilon)
+    for T in range(int(1_000_000)):
+        if done:
             state, info = env.reset()
             done = False
             states, actions, rewards, keys, values, hashes = [], [], [], [], [], []  # Store transition data in episodic buffers
 
-            # Linearly anneal ε over set interval
-            if T > kwargs.epsilon_anneal_start and T <= kwargs.epsilon_anneal_end:
-                epsilon -= (kwargs.epsilon_initial - kwargs.epsilon_final) / (kwargs.epsilon_anneal_end - kwargs.epsilon_anneal_start)
-                agent.set_epsilon(epsilon)
-        
-            # Append transition data to episodic buffers (1/2)
-            states.append(state.detach().cpu())
-            state_hash = np.concatenate([env.grid.encode(),
-                        env.agent_pos, env.agent_dir], axis=None).ravel()
-            state_hash = state_hash / 0xFF
-            state_hash = state_hash.astype(np.float32)
-            hashes.append(state_hash)
-        
-            # Choose an action according to the policy
-            action, key, value = agent.act(state, return_key_value=True)
-            state, reward, terminated, truncated, info = env.step(action)  # Step
-            done = terminated | truncated
+        # Linearly anneal ε over set interval
+        if T > kwargs.epsilon_anneal_start and T <= kwargs.epsilon_anneal_end:
+            epsilon -= (kwargs.epsilon_initial - kwargs.epsilon_final) / (kwargs.epsilon_anneal_end - kwargs.epsilon_anneal_start)
+            agent.set_epsilon(epsilon)
+    
+        # Append transition data to episodic buffers (1/2)
+        states.append(state.detach().cpu())
+        state_hash = np.concatenate([env.grid.encode(),
+                    env.agent_pos, env.agent_dir], axis=None).ravel()
+        state_hash = state_hash / 0xFF
+        state_hash = state_hash.astype(np.float32)
+        hashes.append(state_hash)
+    
+        # Choose an action according to the policy
+        action, key, value = agent.act(state, return_key_value=True)
+        state, reward, terminated, truncated, info = env.step(action)  # Step
+        done = terminated | truncated
 
 
-            # Append transition data to episodic buffers (2/2); note that original NEC implementation does not recalculate keys/values at the end of the episode
-            actions.append(action)
-            rewards.append(reward)
-            keys.append(key.cpu().numpy())
-            values.append(value)
+        # Append transition data to episodic buffers (2/2); note that original NEC implementation does not recalculate keys/values at the end of the episode
+        actions.append(action)
+        rewards.append(reward)
+        keys.append(key.cpu().numpy())
+        values.append(value)
 
-            # Calculate returns at episode to batch memory updates
-            if done:
-                episode_T = len(rewards)
-                returns, multistep_returns = [None] * episode_T, [None] * episode_T
-                returns.append(0)
-                for i in range(episode_T - 1, -1, -1):  # Calculate return-to-go in reverse
-                    returns[i] = rewards[i] + kwargs.discount * returns[i + 1]
-                    if episode_T - i > kwargs.episodic_multi_step:  # Calculate multi-step returns (originally only for NEC)
-                        multistep_returns[i] = returns[i] + kwargs.discount ** kwargs.episodic_multi_step * (values[i + kwargs.episodic_multi_step] - returns[i + kwargs.episodic_multi_step])
-                    else:  # Calculate Monte Carlo returns (originally only for MFEC)
-                        multistep_returns[i] = returns[i]
-                states, actions, returns, keys, hashes = np.stack(states), np.asarray(actions, dtype=np.int64), np.asarray(multistep_returns, dtype=np.float32), np.stack(keys), np.stack(hashes)
-                unique_actions, unique_action_reverse_idxs = np.unique(actions, return_inverse=True)  # Find every unique action taken and indices
-                for i, a in enumerate(unique_actions):
-                    a_idxs = (unique_action_reverse_idxs == i).nonzero()[0]
-                    agent.update_memory_batch(a.item(), keys[a_idxs], returns[a_idxs][:, np.newaxis], hashes[a_idxs])  # Append transition to DND of action in batch
+        # Calculate returns at episode to batch memory updates
+        if done:
+            episode_T = len(rewards)
+            returns, multistep_returns = [None] * episode_T, [None] * episode_T
+            returns.append(0)
+            for i in range(episode_T - 1, -1, -1):  # Calculate return-to-go in reverse
+                returns[i] = rewards[i] + kwargs.discount * returns[i + 1]
+                if episode_T - i > kwargs.episodic_multi_step:  # Calculate multi-step returns (originally only for NEC)
+                    multistep_returns[i] = returns[i] + kwargs.discount ** kwargs.episodic_multi_step * (values[i + kwargs.episodic_multi_step] - returns[i + kwargs.episodic_multi_step])
+                else:  # Calculate Monte Carlo returns (originally only for MFEC)
+                    multistep_returns[i] = returns[i]
+            states, actions, returns, keys, hashes = np.stack(states), np.asarray(actions, dtype=np.int64), np.asarray(multistep_returns, dtype=np.float32), np.stack(keys), np.stack(hashes)
+            unique_actions, unique_action_reverse_idxs = np.unique(actions, return_inverse=True)  # Find every unique action taken and indices
+            for i, a in enumerate(unique_actions):
+                a_idxs = (unique_action_reverse_idxs == i).nonzero()[0]
+                agent.update_memory_batch(a.item(), keys[a_idxs], returns[a_idxs][:, np.newaxis], hashes[a_idxs])  # Append transition to DND of action in batch
 
-            # results_dir = os.path.join('results', kwargs.id)
-            test_rewards = []
-            if T % kwargs.evaluation_interval == 0:
-                agent.eval()  # Set agent to evaluation mode
-                test_rewards = test(kwargs, T, agent, results_dir)  # Test
-                agent.train()  # Set agent back to training mode
-    except AssertionError as e:
-        # Sometimes, random hyperparams can generate NaN.
-        print(e)
-        nan_encountered = True
-    finally:
-        # Free memory.
-        env.close()
-        # eval_env.close()
+        if T % kwargs.evaluation_interval == 0:
+            agent.eval()  # Set agent to evaluation mode
+            test_rewards = test(kwargs, T, agent, results_dir)  # Test
+            agent.train()  # Set agent back to training mode
+            
+    env.close()
 
-    # Tell the optimizer that the trial failed.
-    if nan_encountered:
-        return float("nan")
 
     if trial.should_prune():
         raise optuna.exceptions.TrialPruned()
 
     # return eval_callback.last_mean_reward
-    return sum(test_rewards)
+    return np.mean(test_rewards)
 
 
 if __name__ == "__main__":
@@ -274,10 +230,11 @@ if __name__ == "__main__":
     pruner = MedianPruner(n_startup_trials=N_STARTUP_TRIALS, n_warmup_steps=N_EVALUATIONS // 3)
 
     study = optuna.create_study(storage="sqlite:///mfec.sqlite3",
-                                study_name="MFEC-18",
+                                study_name="Every hyperparameter everywhere all at once",
                                 sampler=sampler,
                                 pruner=pruner,
-                                direction="maximize")
+                                direction="maximize",
+                                load_if_exists=True,)
     try:
         study.optimize(objective, n_trials=N_TRIALS)
     except KeyboardInterrupt:

@@ -73,8 +73,8 @@ class MFECAgent(_EpisodicAgent):
     self.action_space = action_space
 
     self.online_net = MFEC(args, observation_shape, action_space, hash_size).to(device=args.device)
-    # if args.model and os.path.isfile(args.model):
-    #   self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
+    if args.model and os.path.isfile(args.model):
+      self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
     self.online_net.train()
 
 

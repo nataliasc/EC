@@ -81,6 +81,7 @@ def test(args, T, agent, results_dir, evaluate=False):
     rewards.append(T_rewards)
 
     # Plot
+    
     lineplot(Ts, rewards, 'Reward', path=results_dir, xaxis='Step')
     # lineplot(Ts, Qs, 'Q', path=results_dir, xaxis='Step')
 
