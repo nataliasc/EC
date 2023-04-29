@@ -7,6 +7,7 @@ import torch
 import ipdb
 import plotly.express as px
 import time
+import imageio
 
 import gymnasium as gym
 from wrappers import ImgObsWrapper
@@ -44,11 +45,11 @@ def lineplot(xs, ys_population, title, path='', xaxis='episode'):
 def test(args, T, agent, val_mem, results_dir, evaluate=False):
   global Ts, rewards, Qs, best_avg_reward
   # Environment
-  env = gym.make('MiniGrid-DoorKey-5x5-v0')
+  env = gym.make('MiniGrid-DoorKey-6x6-v0')
   env = RGBImgObsWrapper(env) # Get pixel observations
   env = ImgObsWrapper(env, args.device) # Get rid of the 'mission' field
   Ts.append(T)
-  T_rewards, T_Qs = [], []
+  T_rewards, T_Qs, frames = [], [], []
 
   # Test performance over several episodes
   done = True
@@ -65,11 +66,15 @@ def test(args, T, agent, val_mem, results_dir, evaluate=False):
         
       done = terminated | truncated
       reward_sum += reward
+      frame = env.get_frame(tile_size=30)
+      frames.append(frame)
 
       if done:
         T_rewards.append(reward_sum)
         break
   env.close()
+  timestr = time.strftime("%Y-%m-%d_%H-%M-%S")
+  imageio.mimsave(f'test_{timestr}.gif', frames, fps=4)
 
   # Test Q-values over validation memory
   for state in val_mem:  # Iterate over valid states
