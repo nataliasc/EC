@@ -36,16 +36,12 @@ N_EVAL_EPISODES = 3
 
 ENV_ID = 'MiniGrid-DoorKey-6x6-v0'
 
-DEFAULT_HYPERPARAMS = {
-    "env": ENV_ID,
-}
-
 
 def sample_nec_params(trial: optuna.Trial):
-    """Sampler for NEC hyperparameters."""
-    key_size = trial.suggest_int('key_size', 64, 512)
+    """Sampler for MFEC hyperparameters."""
+    key_size = 2 ** trial.suggest_int('exponent_key_size', 6, 9)
     num_neighbours = trial.suggest_int('num_neighbours', 11, 50)
-    memory_capacity = trial.suggest_int('memory_capacity', 100, 10_000)
+    # memory_capacity = trial.suggest_int('memory_capacity', 100, 10_000) # buffer size for NEC
     dictionary_capacity = trial.suggest_int('dictionary_capacity', 500, 50_000, log=True)
     replay_frequency = trial.suggest_int('replay_frequency', 1, 4)
     epsilon_initial = trial.suggest_float("epsilon_initial", 0.99, 1, log=False)
@@ -53,9 +49,8 @@ def sample_nec_params(trial: optuna.Trial):
     epsilon_anneal_start = trial.suggest_int('epsilon_anneal_start', 5000, 10_000)
     epsilon_anneal_end = trial.suggest_int('epsilon_anneal_end', 1_000_000, 5_000_000)
     discount = trial.suggest_float("discount", 0.99, 1., log=False)
-    n_steps = 2 ** trial.suggest_int("exponent_n_steps", 3, 10)
     learning_rate = trial.suggest_float("lr", 1e-5, 1, log=True)
-    dictionary_learning_rate = trial.suggest_float("dict_lr", 1e-5, 0.1, log=True)
+    # dictionary_learning_rate = trial.suggest_float("dict_lr", 1e-5, 0.1, log=True)
     # activation_fn = trial.suggest_categorical("activation_fn", ["tanh", "relu"])
 
     # trial.set_user_attr("n_steps", n_steps)
@@ -70,7 +65,7 @@ def sample_nec_params(trial: optuna.Trial):
                  key_size=key_size,
                  num_neighbours=num_neighbours,
                 #  model="./model.pth",
-                 memory_capacity=memory_capacity,
+                #  memory_capacity=memory_capacity,
                  dictionary_capacity=dictionary_capacity,
                  replay_frequency=replay_frequency,
                  episodic_multi_step=100,
@@ -83,8 +78,8 @@ def sample_nec_params(trial: optuna.Trial):
                  rmsprop_decay=0.95,
                  rmsprop_epsilon=0.01,
                  rmsprop_momentum=0,
-                 dictionary_learning_rate=dictionary_learning_rate,
-                 kernel='mean',
+                #  dictionary_learning_rate=dictionary_learning_rate,
+                 kernel='mean_IDW',
                  kernel_delta=1e-3,
                  batch_size=32,
                  learn_start=10_000,
@@ -230,7 +225,7 @@ if __name__ == "__main__":
     pruner = MedianPruner(n_startup_trials=N_STARTUP_TRIALS, n_warmup_steps=N_EVALUATIONS // 3)
 
     study = optuna.create_study(storage="sqlite:///mfec.sqlite3",
-                                study_name="Every hyperparameter everywhere all at once",
+                                study_name="MFEC",
                                 sampler=sampler,
                                 pruner=pruner,
                                 direction="maximize",
