@@ -44,12 +44,19 @@ class _EpisodicAgent(_Agent):
     super().__init__(args)
 
   # Acts based on single state (no batch)
-  def act(self, state, return_key_value=False):
+  def act(self, state, return_key_value=False, return_value=False, use_memory=False):
     with torch.no_grad():
-      q_values, key = self.online_net(state.unsqueeze(dim=0))
+      if use_memory:
+        q_values, key = self.online_net(state.unsqueeze(dim=0))
+      else:
+        q_values = self.online_net(state.unsqueeze(dim=0))
+
       action, value = super()._act(q_values)
+
       if return_key_value:
         return action, key.squeeze(dim=0), value
+      if return_value:
+        return action, value
       else:
         return action
 
@@ -79,12 +86,13 @@ class MFECAgent(_EpisodicAgent):
 
 
 class NECAgent(_EpisodicAgent):
-  def __init__(self, args, observation_shape, action_space, hash_size):
+  def __init__(self, args, observation_shape, action_space, hash_size, use_memory):
     super().__init__(args)
     self.action_space = action_space
     self.batch_size = args.batch_size
+    self.use_memory = use_memory
 
-    self.online_net = NEC(args, observation_shape, action_space, hash_size).to(device=args.device)
+    self.online_net = NEC(args, observation_shape, action_space, hash_size, use_memory).to(device=args.device)
     if args.model and os.path.isfile(args.model):
       self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
     self.online_net.train()
@@ -95,7 +103,10 @@ class NECAgent(_EpisodicAgent):
     # Sample transitions with returns
     states, actions, returns = mem.sample_returns(self.batch_size)
     # Calculate Q-values
-    q_values, neighbours, values, idxs, _ = self.online_net(states, learning=True)
+    if self.use_memory:
+      q_values, neighbours, values, idxs, _ = self.online_net(states, learning=True, use_memory=True)
+    else:
+      q_values = self.online_net(states, learning=True, use_memory=False)
     q_values = q_values[range(self.batch_size), actions]
     # Minimise residual between Q-values and multi-step returns
     loss = F.mse_loss(q_values, returns)
@@ -103,6 +114,8 @@ class NECAgent(_EpisodicAgent):
     # Calculate gradients and update network parameters
     loss.backward()
     self.optimiser.step()
-    # Update keys and values with gradients
-    for n, v, i, m in zip(neighbours, values, idxs, self.online_net.memories):
-      m.gradient_update(n, v, i)
+
+    if self.use_memory:
+      # Update keys and values with gradients
+      for n, v, i, m in zip(neighbours, values, idxs, self.online_net.memories):
+        m.gradient_update(n, v, i)

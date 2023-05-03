@@ -241,7 +241,7 @@ class DND(StaticDictionary):
 
     
 class NEC(nn.Module):
-  def __init__(self, args, observation_shape, action_space, hash_size):
+  def __init__(self, args, observation_shape, action_space, hash_size, use_memory=False):
     super().__init__()
 
     n = observation_shape[1]
@@ -253,18 +253,28 @@ class NEC(nn.Module):
     self.conv2          = nn.Conv2d(16, 32, (2, 2))
     self.conv3          = nn.Conv2d(32, 64, (2, 2))
     self.fc_keys        = nn.Linear(self.image_embedding_size, args.key_size)
-    faiss_gpu_resources = _setup_faiss_gpu_resources(args.device)
-    self.memories       = [DND(args, hash_size, faiss_gpu_resources) for _ in range(action_space)]
+    self.out            = nn.Linear(args.key_size, action_space)
+    if use_memory:
+      faiss_gpu_resources = _setup_faiss_gpu_resources(args.device)
+      self.memories       = [DND(args, hash_size, faiss_gpu_resources) for _ in range(action_space)]
 
-  def forward(self, observation, learning=False):
+  def forward(self, observation, learning=False, use_memory=False):
     hidden = F.relu(self.conv1(observation))
     hidden = self.max_pool(hidden)
     hidden = F.relu(self.conv2(hidden))
     hidden = F.relu(self.conv3(hidden))
-    keys = self.fc_keys(hidden.view(-1, self.image_embedding_size))
-    memory_output = [memory(keys, learning) for memory in self.memories]
-    if learning:
-      memory_output, neighbours, values, idxs = zip(*memory_output)
-      return torch.cat(memory_output, dim=1), neighbours, values, idxs, keys  # Return Q-values, neighbours, values and keys
+
+    if use_memory:
+      keys = self.fc_keys(hidden.view(-1, self.image_embedding_size))
+      memory_output = [memory(keys, learning) for memory in self.memories]
+
+      if learning:
+        memory_output, neighbours, values, idxs = zip(*memory_output)
+        return torch.cat(memory_output, dim=1), neighbours, values, idxs, keys  # Return Q-values, neighbours, values and keys
+      else:
+        return torch.cat(memory_output, dim=1), keys  # Return Q-values and keys
+      
     else:
-      return torch.cat(memory_output, dim=1), keys  # Return Q-values and keys
+      keys = F.relu(self.fc_keys(hidden.view(-1, self.image_embedding_size)))
+      q_values = self.out(keys)
+      return q_values
