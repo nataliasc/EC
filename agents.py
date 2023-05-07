@@ -89,7 +89,7 @@ class NECAgent(_EpisodicAgent):
       self.online_net.load_state_dict(torch.load(args.model, map_location='cpu'))  # Always load tensors onto CPU by default, will shift to GPU if necessary
     self.online_net.train()
 
-    self.optimiser = RMSprop(self.online_net.parameters(), lr=args.learning_rate, alpha=args.rmsprop_decay, eps=args.rmsprop_epsilon, momentum=args.rmsprop_momentum)
+    self.optimiser = torch.optim.Adam(self.online_net.parameters(), lr=0.0001)
 
   def learn(self, mem):
     # Sample transitions with returns
@@ -98,7 +98,7 @@ class NECAgent(_EpisodicAgent):
     q_values, neighbours, values, idxs, _ = self.online_net(states, learning=True)
     q_values = q_values[range(self.batch_size), actions]
     # Minimise residual between Q-values and multi-step returns
-    loss = F.mse_loss(q_values, returns)
+    loss = F.smooth_l1_loss(q_values, returns)
     self.optimiser.zero_grad()
     # Calculate gradients and update network parameters
     loss.backward()

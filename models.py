@@ -244,24 +244,18 @@ class NEC(nn.Module):
   def __init__(self, args, observation_shape, action_space, hash_size):
     super().__init__()
 
-    n = observation_shape[1]
-    m = observation_shape[2]
-    self.image_embedding_size = ((n - 1) // 2 - 2) * ((m - 1) // 2 - 2) * 64
-
-    self.conv1          = nn.Conv2d(3, 16, (2, 2))
-    self.max_pool       = nn.MaxPool2d((2, 2))
-    self.conv2          = nn.Conv2d(16, 32, (2, 2))
-    self.conv3          = nn.Conv2d(32, 64, (2, 2))
-    self.fc_keys        = nn.Linear(self.image_embedding_size, args.key_size)
+    self.conv1          = nn.Conv2d(3, 32, kernel_size=8, stride=4, padding=0)
+    self.conv2          = nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=0)
+    self.conv3          = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=0)
+    self.fc_keys        = nn.Linear(256, args.key_size)
     faiss_gpu_resources = _setup_faiss_gpu_resources(args.device)
     self.memories       = [DND(args, hash_size, faiss_gpu_resources) for _ in range(action_space)]
 
   def forward(self, observation, learning=False):
     hidden = F.relu(self.conv1(observation))
-    hidden = self.max_pool(hidden)
     hidden = F.relu(self.conv2(hidden))
     hidden = F.relu(self.conv3(hidden))
-    keys = self.fc_keys(hidden.view(-1, self.image_embedding_size))
+    keys = self.fc_keys(hidden.view(-1, 256))
     memory_output = [memory(keys, learning) for memory in self.memories]
     if learning:
       memory_output, neighbours, values, idxs = zip(*memory_output)
